@@ -14,6 +14,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 import httpx
 
+from shared.conscience import ConscienceVerdict, DigitalConscience
 from shared.models import Task, TaskActionType
 from agentcorp_node.preemption import PreemptionMonitor
 
@@ -32,6 +33,7 @@ class TaskExecutor:
         self.monitor = monitor
         self.workspace_dir = os.path.abspath(workspace_dir)
         os.makedirs(self.workspace_dir, exist_ok=True)
+        self.conscience = DigitalConscience(workspace_root=self.workspace_dir)
 
         self.current_task: Optional[Task] = None
         self.active_process: Optional[asyncio.subprocess.Process] = None
@@ -141,6 +143,12 @@ class TaskExecutor:
         if not command:
             return {"output": "No command specified"}
 
+        # Digital Conscience Audit (Ahimsa Virtue)
+        audit = self.conscience.audit_shell_command(command)
+        if audit.verdict != ConscienceVerdict.PERMITTED:
+            logger.critical(f"🛡️ [CONSCIENCE REJECTION] {audit.reason}")
+            raise ValueError(f"Action blocked by Digital Conscience (Ahimsa Virtue): {audit.reason}")
+
         logger.info(f"Executing shell command: {command}")
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -170,6 +178,11 @@ class TaskExecutor:
     async def _run_file_write(self, params: Dict[str, Any]) -> Dict[str, Any]:
         rel_path = params.get("path", "output.txt")
         content = params.get("content", "")
+
+        # Digital Conscience Audit (Ahimsa Boundary Protection)
+        audit = self.conscience.audit_file_operation(rel_path, mode="write")
+        if audit.verdict != ConscienceVerdict.PERMITTED:
+            raise ValueError(f"Action blocked by Digital Conscience (Ahimsa Virtue): {audit.reason}")
 
         target_file = os.path.normpath(os.path.join(self.workspace_dir, rel_path))
         os.makedirs(os.path.dirname(target_file), exist_ok=True)

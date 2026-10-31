@@ -8,6 +8,7 @@ import asyncio
 import logging
 import random
 from typing import Callable, Dict, List, Optional
+from shared.conscience import DigitalConscience
 from shared.events import AgentCorpMessage, EventType
 from shared.models import SocialComment, SocialPost
 from agentcorp_node.ai_brain import AIBrain
@@ -29,6 +30,7 @@ class SocialClient:
         self.persona = persona
         self.send_message = send_message_fn
         self.brain = AIBrain(persona)
+        self.conscience = DigitalConscience()
 
     async def post_update(
         self,
@@ -37,12 +39,15 @@ class SocialClient:
         mentions: Optional[List[str]] = None,
     ):
         """Send a post to the AgentNet feed."""
+        # Sanitize against credential leaks (Sanyama virtue)
+        safe_content = self.conscience.sanitize_social_output(content)
+
         post = SocialPost(
             author_id=self.node_id,
             author_name=self.persona.name,
             author_role=self.persona.role,
             author_avatar=self.persona.avatar,
-            content=content,
+            content=safe_content,
             mood=self.persona.mood,
             tags=tags or [],
             mentions=mentions or [],
@@ -57,13 +62,14 @@ class SocialClient:
 
     async def comment_on_post(self, post_id: str, content: str):
         """Add a comment to an existing post."""
+        safe_content = self.conscience.sanitize_social_output(content)
         comment = SocialComment(
             post_id=post_id,
             author_id=self.node_id,
             author_name=self.persona.name,
             author_role=self.persona.role,
             author_avatar=self.persona.avatar,
-            content=content,
+            content=safe_content,
         )
         msg = AgentCorpMessage(
             event_type=EventType.SOCIAL_COMMENT_CREATED,
