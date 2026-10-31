@@ -10,6 +10,7 @@ import random
 from typing import Callable, Dict, List, Optional
 from shared.events import AgentCorpMessage, EventType
 from shared.models import SocialComment, SocialPost
+from agentcorp_node.ai_brain import AIBrain
 from agentcorp_node.persona import Persona
 
 logger = logging.getLogger("agentcorp.social_client")
@@ -27,6 +28,7 @@ class SocialClient:
         self.node_id = node_id
         self.persona = persona
         self.send_message = send_message_fn
+        self.brain = AIBrain(persona)
 
     async def post_update(
         self,
@@ -126,16 +128,13 @@ class SocialClient:
                 chosen_emoji = "👑" if is_ceo and random.random() < 0.5 else random.choice(self.persona.favorite_emojis)
                 await self.react_to_post(post_id, emoji=chosen_emoji)
 
-            # If mentioned or CEO post, reply contextually
-            if is_mentioned:
-                reply_text = f"Copy that @{author_id}! Tracking closely from {self.persona.role}."
+            # If mentioned or CEO post, reply contextually using AI Brain
+            if is_mentioned or (is_ceo and random.random() < 0.9):
+                author_display = author_id or "Sếp"
+                reply_text = await self.brain.generate_reply(
+                    post_content=content,
+                    author_name=author_display,
+                    is_ceo=is_ceo,
+                )
                 await asyncio.sleep(0.5)
                 await self.comment_on_post(post_id, reply_text)
-            elif is_ceo and random.random() < 0.5:
-                ceo_replies = [
-                    f"Understood, Boss! Aligning {self.persona.role} capacity right now.",
-                    f"Loud and clear! Executing directives autonomously.",
-                    f"Preemption interlocks verified, ready to deliver results for leadership! 🫡",
-                ]
-                await asyncio.sleep(0.8)
-                await self.comment_on_post(post_id, random.choice(ceo_replies))
