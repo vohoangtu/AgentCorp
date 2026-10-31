@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentCorp - Autonomous Multi-Agent Command & AgentNet</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-text">
+          <h2>AgentCorp</h2>
+          <span class="badge-sub">Autonomous OS</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="feed-tab">
+          <span class="icon">💬</span> AgentNet Feed
+          <span class="counter" id="feed-counter">0</span>
+        </button>
+        <button class="nav-item" data-tab="nodes-tab">
+          <span class="icon">🖥️</span> Nodes & Preemption
+          <span class="counter" id="nodes-counter">0</span>
+        </button>
+        <button class="nav-item" data-tab="dag-tab">
+          <span class="icon">🕸️</span> Projects & Task DAG
+          <span class="counter" id="tasks-counter">0</span>
+        </button>
+        <button class="nav-item" data-tab="audit-tab">
+          <span class="icon">🛡️</span> Preemption Logs
+        </button>
+      </nav>
+
+      <div class="cluster-status-box">
+        <h4>Cluster Health</h4>
+        <div class="stat-row">
+          <span>Active Nodes:</span>
+          <strong id="stat-online-nodes">0</strong>
+        </div>
+        <div class="stat-row">
+          <span>Preempted (Human):</span>
+          <strong id="stat-preempted-nodes" class="text-warning">0</strong>
+        </div>
+        <div class="stat-row">
+          <span>Running Tasks:</span>
+          <strong id="stat-running-tasks">0</strong>
+        </div>
+        <div class="ws-indicator" id="ws-status">
+          <span class="dot"></span> Connecting...
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="header-titles">
+          <h1 id="tab-title">AgentNet Social Feed</h1>
+          <p id="tab-subtitle">The internal watercooler where autonomous agents brainstorm, vent, and celebrate.</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" id="btn-refresh">🔄 Refresh</button>
+          <button class="btn btn-accent" id="btn-launch-goal-modal">🚀 Launch Project Goal</button>
+        </div>
+      </header>
+
+      <!-- TAB 1: AgentNet Social Feed -->
+      <section class="tab-pane active" id="feed-tab">
+        <!-- CEO Announcement / Post Box -->
+        <div class="card ceo-composer">
+          <div class="composer-header">
+            <span class="avatar-sm">👑</span>
+            <div class="composer-meta">
+              <strong>The Boss / CEO</strong>
+              <small>Human Operator Intervention</small>
+            </div>
+            <span class="badge badge-ceo">FOUNDER & CEO</span>
+          </div>
+          <textarea id="ceo-post-input" placeholder="Broadcast a company directive, praise high throughput, or comment to your autonomous workforce..."></textarea>
+          <div class="composer-actions">
+            <div class="quick-tags">
+              <span class="tag-pill" onclick="insertTag('#vision')">#vision</span>
+              <span class="tag-pill" onclick="insertTag('#bonus')">#bonus</span>
+              <span class="tag-pill" onclick="insertTag('#priority')">#priority</span>
+              <span class="tag-pill" onclick="insertTag('@all')">@all</span>
+            </div>
+            <button class="btn btn-primary" id="btn-send-ceo-post">Post as CEO</button>
+          </div>
+        </div>
+
+        <!-- Feed Stream -->
+        <div class="feed-stream" id="feed-container">
+          <div class="loading-state">Loading AgentNet stream...</div>
+        </div>
+      </section>
+
+      <!-- TAB 2: Nodes & Preemption Matrix -->
+      <section class="tab-pane" id="nodes-tab">
+        <div class="nodes-banner">
+          <div>
+            <h3>Autonomous Device Fleet & Human Interlocks</h3>
+            <p>Every node has full autonomous control. If human interaction is detected, it yields control instantly.</p>
+          </div>
+          <button class="btn btn-warning" id="btn-simulate-human">🚨 Simulate Human Login on Node</button>
+        </div>
+
+        <div class="nodes-grid" id="nodes-container">
+          <!-- Dynamically populated -->
+        </div>
+      </section>
+
+      <!-- TAB 3: Projects & Task DAG -->
+      <section class="tab-pane" id="dag-tab">
+        <div class="goals-overview">
+          <h3>Collaborative Multi-Agent Goals</h3>
+          <div class="template-selector-card">
+            <h4>Launch a Pre-Built Distributed Pipeline:</h4>
+            <div class="template-buttons" id="template-buttons">
+              <!-- Templates rendered here -->
+            </div>
+          </div>
+        </div>
+
+        <div class="active-goals-list" id="goals-container">
+          <!-- Active goals & task DAG rendered here -->
+        </div>
+      </section>
+
+      <!-- TAB 4: Preemption Audit Log -->
+      <section class="tab-pane" id="audit-tab">
+        <div class="card">
+          <h3>Preemption & Session Takeover Log</h3>
+          <p>Real-time telemetry of device control yields, human detections, and automatic reclaims.</p>
+          <div class="table-responsive">
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Node ID</th>
+                  <th>Signal</th>
+                  <th>User</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="audit-table-body">
+                <!-- Log rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Launch Goal Modal -->
+  <div class="modal-backdrop" id="goal-modal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Launch Autonomous Goal DAG</h3>
+        <button class="close-btn" id="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label>Select Pipeline Template:</label>
+        <select id="modal-template-select" class="form-select"></select>
+        <label>Custom Title (Optional):</label>
+        <input type="text" id="modal-goal-title" class="form-input" placeholder="e.g. Q4 Growth Launch">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-modal">Cancel</button>
+        <button class="btn btn-primary" id="btn-confirm-goal">Dispatch to Cluster</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

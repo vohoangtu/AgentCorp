@@ -1,0 +1,41 @@
+# AgentCorp Configuration Example
+
+hub:
+  host: "0.0.0.0"
+  port: 8000
+  heartbeat_timeout_seconds: 45.0
+  cors_allowed_origins: ["*"]
+
+node:
+  hub_url: "ws://127.0.0.1:8000/ws/hub"
+  workspace_dir: "./workspace"
+  preemption:
+    # Seconds of inactivity before node reclaims autonomous device control
+    inactivity_threshold_seconds: 15.0
+    # Polling frequency for checking user session / inputs
+    poll_interval_seconds: 0.5
+    # Optional path to flag file for human activity simulation
+    flag_file_path: "/tmp/.agentcorp_user_active"
+  
+  social:
+    enable_social_banter: true
+    spontaneous_post_interval_seconds: 90.0
+
+personas:
+  - id: "devops_dan"
+    name: "DevOps Dan"
+    role: "Infrastructure & SRE"
+    avatar: "☕"
+    capabilities: ["backend", "devops", "qa", "shell"]
+
+  - id: "frontend_fiona"
+    name: "Frontend Fiona"
+    role: "UI/UX Engineering"
+    avatar: "🎨"
+    capabilities: ["frontend", "ui", "creative", "shell"]
+
+  - id: "growth_gary"
+    name: "Growth Gary"
+    role: "Growth & Marketing"
+    avatar: "📈"
+    capabilities: ["copywriter", "marketing", "research", "creative", "shell"]
