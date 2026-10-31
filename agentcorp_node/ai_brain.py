@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 import httpx
 
 from agentcorp_node.persona import Persona
+from agentcorp_node.tuzygent_adapter import TuzygentAdapter
 
 logger = logging.getLogger("agentcorp.ai_brain")
 
@@ -23,6 +24,7 @@ class AIBrain:
 
     def __init__(self, persona: Persona):
         self.persona = persona
+        self.tuzygent = TuzygentAdapter()
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         self.openai_api_key = os.getenv("OPENAI_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
         self.openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -35,7 +37,18 @@ class AIBrain:
         is_ceo: bool = False,
     ) -> str:
         """Generate a natural, contextual reply to a post."""
-        # 1. Try LLM generation if configured
+        # 0. Primary Cognitive Core: Tuzygent Platform (if available)
+        if self.tuzygent.is_available():
+            tuzy_reply = await self.tuzygent.deliberate(
+                persona=self.persona,
+                post_content=post_content,
+                author_name=author_name,
+                is_ceo=is_ceo,
+            )
+            if tuzy_reply:
+                return tuzy_reply
+
+        # 1. Try Direct LLM generation if configured
         if self.gemini_api_key:
             reply = await self._call_gemini(post_content, author_name, is_ceo)
             if reply:

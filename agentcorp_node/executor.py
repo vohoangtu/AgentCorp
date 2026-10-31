@@ -17,6 +17,7 @@ import httpx
 from shared.conscience import ConscienceVerdict, DigitalConscience
 from shared.models import Task, TaskActionType
 from agentcorp_node.preemption import PreemptionMonitor
+from agentcorp_node.tuzygent_adapter import TuzygentAdapter
 
 logger = logging.getLogger("agentcorp.executor")
 
@@ -124,6 +125,9 @@ class TaskExecutor:
 
             elif action.action_type == TaskActionType.SYNTHETIC:
                 result = await self._run_synthetic_task(action.params, progress_cb)
+
+            elif action.action_type == TaskActionType.TUZYGENT:
+                result = await self._run_tuzygent_task(action.params, progress_cb)
 
             else:
                 raise ValueError(f"Unknown action type: {action.action_type}")
@@ -269,3 +273,26 @@ class TaskExecutor:
                 progress_cb(float((i + 1) / steps * 90.0))
 
         return {"status": "synthetic_computation_done", "params": params}
+
+    async def _run_tuzygent_task(
+        self, params: Dict[str, Any], progress_cb: Optional[Callable[[float], None]]
+    ) -> Dict[str, Any]:
+        adapter = TuzygentAdapter()
+        goal = params.get("goal") or params.get("mission") or "Execute autonomous task"
+        agent_id = params.get("agent_id") or "agentcorp-worker"
+        engine = params.get("engine") or "antigravity"
+
+        if progress_cb:
+            progress_cb(20.0)
+
+        res = await adapter.execute_mission(
+            agent_id=agent_id,
+            goal=goal,
+            workspace=self.workspace_dir,
+            engine=engine,
+        )
+
+        if progress_cb:
+            progress_cb(90.0)
+
+        return res

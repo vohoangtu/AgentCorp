@@ -77,6 +77,7 @@ class TaskActionType(str, Enum):
     BROWSER = "BROWSER"        # Browser/HTTP task
     GUI = "GUI"                # Simulated GUI / desktop automation
     SYNTHETIC = "SYNTHETIC"    # Logical processing / cognitive task
+    TUZYGENT = "TUZYGENT"      # High-level mission delegated to Tuzygent OODA loop
 
 
 class TaskAction(BaseModel):
