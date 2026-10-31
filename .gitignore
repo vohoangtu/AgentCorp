@@ -9,4 +9,8 @@ __pycache__/
 *.sqlite3
 .env
 .DS_Store
+memory/
+storage/
+.multica/
+.agent_context.md
 

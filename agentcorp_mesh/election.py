@@ -36,7 +36,7 @@ class MeshElectionManager:
     ):
         self.self_node = self_node
         self.port = port
-        self.preferred_leaders = preferred_leaders or []
+        self.preferred_leaders = preferred_leaders or ["vultr"]
         self.check_active_hub = check_active_hub
         self.current_leader: Optional[TailscaleNode] = None
         self._preempted_nodes: Dict[str, bool] = {}
