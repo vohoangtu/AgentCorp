@@ -5,18 +5,39 @@ Selects an Orchestrator Leader deterministically across all online tailnet nodes
 from __future__ import annotations
 
 import logging
+import socket
 from typing import Dict, List, Optional
 from agentcorp_mesh.tailscale_discovery import TailscaleNode
 
 logger = logging.getLogger("agentcorp.mesh.election")
 
 
+def is_hub_port_open(ip: str, port: int = 8000, timeout: float = 0.4) -> bool:
+    """Check if the Hub port is actively listening and reachable on the given IP."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        res = s.connect_ex((ip, port))
+        s.close()
+        return res == 0
+    except Exception:
+        return False
+
+
 class MeshElectionManager:
     """Computes and coordinates the elected leader in the Tailscale Mesh."""
 
-    def __init__(self, self_node: TailscaleNode, preferred_leaders: Optional[List[str]] = None):
+    def __init__(
+        self,
+        self_node: TailscaleNode,
+        preferred_leaders: Optional[List[str]] = None,
+        port: int = 8000,
+        check_active_hub: bool = True,
+    ):
         self.self_node = self_node
-        self.preferred_leaders = preferred_leaders or ["vultr", "server", "srv", "hub"]
+        self.port = port
+        self.preferred_leaders = preferred_leaders or []
+        self.check_active_hub = check_active_hub
         self.current_leader: Optional[TailscaleNode] = None
         self._preempted_nodes: Dict[str, bool] = {}
 
@@ -34,13 +55,19 @@ class MeshElectionManager:
         """
         score = 100
 
+        # If this node ALREADY has an active Hub listening on port 8000, prioritize it so nodes converge!
+        if self.check_active_hub:
+            target_check_ip = "127.0.0.1" if node.is_self else node.ip
+            if is_hub_port_open(target_check_ip, self.port):
+                score += 1000
+
         # If a human user is physically operating this machine, penalize heavily so it yields leadership
         if self.is_node_preempted(node):
             score -= 500
 
-        # Prefer dedicated servers/cloud VPS over mobile/desktop if specified
+        # Preferred hostnames if specified by user
         for pref in self.preferred_leaders:
-            if pref.lower() in node.hostname.lower():
+            if pref and pref.lower() in node.hostname.lower():
                 score += 50
                 break
 

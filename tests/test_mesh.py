@@ -19,7 +19,7 @@ def test_mesh_election_prefers_server_node():
     server_node = TailscaleNode(hostname="vultr", dns_name="vultr.ts.net", ip="100.1.1.2", is_self=False, is_online=True)
     client_node = TailscaleNode(hostname="fox", dns_name="fox.ts.net", ip="100.1.1.3", is_self=False, is_online=True)
 
-    election = MeshElectionManager(self_node=self_node, preferred_leaders=["vultr", "srv"])
+    election = MeshElectionManager(self_node=self_node, preferred_leaders=["vultr", "srv"], check_active_hub=False)
     leader = election.elect_leader([self_node, server_node, client_node])
 
     # vultr has +50 preferred score, so it must win election
@@ -32,7 +32,7 @@ def test_mesh_election_yields_when_human_preempts():
     self_node = TailscaleNode(hostname="nextech", dns_name="nextech.ts.net", ip="100.1.1.1", is_self=True, is_online=True)
     vultr_node = TailscaleNode(hostname="vultr", dns_name="vultr.ts.net", ip="100.1.1.2", is_self=False, is_online=True)
 
-    election = MeshElectionManager(self_node=self_node, preferred_leaders=["vultr"])
+    election = MeshElectionManager(self_node=self_node, preferred_leaders=["vultr"], check_active_hub=False)
 
     # Before preemption: vultr is leader
     assert election.elect_leader([self_node, vultr_node]).hostname == "vultr"
