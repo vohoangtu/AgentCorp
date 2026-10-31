@@ -27,6 +27,11 @@ class PreemptionInterruptedError(Exception):
     pass
 
 
+class TaskCancelledError(Exception):
+    """Raised when a running task is cancelled by user/operator command."""
+    pass
+
+
 class TaskExecutor:
     """Executes actions on the local device under the supervision of the preemption monitor."""
 
@@ -39,6 +44,8 @@ class TaskExecutor:
         self.current_task: Optional[Task] = None
         self.active_process: Optional[asyncio.subprocess.Process] = None
         self._is_paused: bool = False
+        self._is_cancelled: bool = False
+        self._cancel_reason: str = ""
         self._resume_event = asyncio.Event()
         self._resume_event.set()
 
@@ -98,6 +105,8 @@ class TaskExecutor:
     ) -> Dict[str, Any]:
         """Execute a task, checking preemption guards before and during execution."""
         self.current_task = task
+        self._is_cancelled = False
+        self._cancel_reason = ""
         action = task.action
 
         try:
@@ -111,6 +120,9 @@ class TaskExecutor:
                     await asyncio.wait_for(self._resume_event.wait(), timeout=timeout)
                 except asyncio.TimeoutError:
                     raise PreemptionInterruptedError("Timed out waiting for human user to yield workstation.")
+
+            if self._is_cancelled:
+                raise TaskCancelledError(self._cancel_reason or "Task cancelled before start")
 
             if progress_cb:
                 progress_cb(10.0)
@@ -174,12 +186,16 @@ class TaskExecutor:
 
         # Monitor execution while respecting pause events
         stdout_data, stderr_data = await proc.communicate()
-        exit_code = proc.returncode
+        if self._is_cancelled:
+            raise TaskCancelledError(self._cancel_reason or "Task cancelled by operator")
 
+        exit_code = proc.returncode
         out_str = stdout_data.decode("utf-8", errors="replace")
         err_str = stderr_data.decode("utf-8", errors="replace")
 
         if exit_code != 0:
+            if self._is_cancelled or exit_code in (-15, -9, 143):
+                raise TaskCancelledError(self._cancel_reason or "Task process terminated by cancel signal")
             raise RuntimeError(f"Command failed (exit {exit_code}): {err_str or out_str}")
 
         return {
@@ -187,6 +203,63 @@ class TaskExecutor:
             "stdout": out_str.strip(),
             "stderr": err_str.strip(),
         }
+
+    def cancel_current_task(self, reason: str = "Cancelled by operator") -> bool:
+        """Immediately abort the currently running task if any."""
+        self._is_cancelled = True
+        self._cancel_reason = reason
+        cancelled = False
+        if self.active_process and self.active_process.pid:
+            try:
+                pgid = os.getpgid(self.active_process.pid)
+                os.killpg(pgid, signal.SIGTERM)
+                logger.warning(f"Sent SIGTERM to process group PGID {pgid} (reason: {reason})")
+                cancelled = True
+            except Exception:
+                try:
+                    os.kill(self.active_process.pid, signal.SIGTERM)
+                    cancelled = True
+                except Exception as e:
+                    logger.debug(f"Could not kill process: {e}")
+        return cancelled
+
+    async def execute_adhoc_command(self, command: str) -> Dict[str, Any]:
+        """Execute an ad-hoc shell command with Conscience checks."""
+        audit = self.conscience.audit_shell_command(command)
+        if audit.verdict != ConscienceVerdict.PERMITTED:
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"Blocked by Digital Conscience: {audit.reason}",
+                "duration": 0.0,
+            }
+
+        start = time.time()
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd=self.workspace_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_data, stderr_data = await proc.communicate()
+            duration = time.time() - start
+            return {
+                "success": proc.returncode == 0,
+                "exit_code": proc.returncode,
+                "stdout": stdout_data.decode("utf-8", errors="replace").strip(),
+                "stderr": stderr_data.decode("utf-8", errors="replace").strip(),
+                "duration": duration,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": str(e),
+                "duration": time.time() - start,
+            }
 
     async def _run_file_write(self, params: Dict[str, Any]) -> Dict[str, Any]:
         rel_path = params.get("path", "output.txt")

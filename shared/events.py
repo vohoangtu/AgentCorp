@@ -31,6 +31,15 @@ class EventType(str, Enum):
     TASK_RESUMED = "TASK_RESUMED"
     GOAL_UPDATED = "GOAL_UPDATED"
 
+    # Agent Client Control Events
+    CLIENT_PAUSE = "CLIENT_PAUSE"              # Drain/pause node from receiving new tasks
+    CLIENT_RESUME = "CLIENT_RESUME"            # Resume node to accept tasks
+    CLIENT_TASK_CANCEL = "CLIENT_TASK_CANCEL"  # Abort currently running task
+    CLIENT_RECONFIG = "CLIENT_RECONFIG"        # Dynamic remote configuration
+    CLIENT_EXEC_COMMAND = "CLIENT_EXEC_COMMAND"# Ad-hoc command dispatch
+    CLIENT_COMMAND_RESULT = "CLIENT_COMMAND_RESULT" # Response to ad-hoc command
+    CLIENT_SET_MODE = "CLIENT_SET_MODE"        # Set workstation mode (BACKGROUND / EXCLUSIVE)
+
     # AgentNet Social events
     SOCIAL_POST_CREATED = "SOCIAL_POST_CREATED"
     SOCIAL_COMMENT_CREATED = "SOCIAL_COMMENT_CREATED"

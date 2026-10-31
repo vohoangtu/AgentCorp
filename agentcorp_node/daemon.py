@@ -14,6 +14,7 @@ import time
 from typing import List, Optional
 import websockets
 
+from shared.config import AgentClientConfig, load_agent_client_config
 from shared.events import AgentCorpMessage, EventType
 from shared.models import (
     ControlMode,
@@ -25,7 +26,7 @@ from shared.models import (
     WorkstationMode,
 )
 from shared.utils import get_system_metrics
-from agentcorp_node.executor import PreemptionInterruptedError, TaskExecutor
+from agentcorp_node.executor import PreemptionInterruptedError, TaskCancelledError, TaskExecutor
 from agentcorp_node.persona import BUILTIN_PERSONAS, Persona
 from agentcorp_node.preemption import PreemptionMonitor
 from agentcorp_node.social_client import SocialClient
@@ -38,29 +39,59 @@ class AgentNodeDaemon:
 
     def __init__(
         self,
-        node_id: str,
-        name: str,
-        hub_url: str = "ws://127.0.0.1:8000/ws/hub",
+        node_id: Optional[str] = None,
+        name: Optional[str] = None,
+        hub_url: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         persona: Optional[Persona] = None,
-        workspace_dir: str = "./workspace",
-        inactivity_threshold_seconds: float = 8.0,
-        enable_social_banter: bool = True,
-        workstation_mode: WorkstationMode = WorkstationMode.BACKGROUND,
+        workspace_dir: Optional[str] = None,
+        inactivity_threshold_seconds: Optional[float] = None,
+        enable_social_banter: Optional[bool] = None,
+        workstation_mode: Optional[WorkstationMode] = None,
+        config: Optional[AgentClientConfig] = None,
     ):
-        self.node_id = node_id
-        self.name = name
-        self.hub_url = hub_url
-        self.capabilities = capabilities or ["shell", "backend", "frontend", "qa", "devops"]
-        self.persona = persona or BUILTIN_PERSONAS.get("devops_dan", Persona(name=name, role="Agent"))
-        self.enable_social_banter = enable_social_banter
+        # 1. Resolve configuration
+        cli_overrides = {}
+        if node_id:
+            cli_overrides["node_id"] = node_id
+        if name:
+            cli_overrides["name"] = name
+        if hub_url:
+            cli_overrides["hub_url"] = hub_url
+        if capabilities:
+            cli_overrides["capabilities"] = capabilities
+        if workspace_dir:
+            cli_overrides["workspace"] = workspace_dir
+        if inactivity_threshold_seconds is not None:
+            cli_overrides["inactivity_threshold_seconds"] = inactivity_threshold_seconds
+        if workstation_mode:
+            cli_overrides["workstation_mode"] = workstation_mode
+
+        self.config = config or load_agent_client_config(cli_args=cli_overrides)
+
+        self.node_id = self.config.node_id
+        self.name = self.config.name
+        self.hub_url = self.config.hub_url
+        self.capabilities = self.config.capabilities
+        self.is_drained: bool = False
+
+        # Persona resolution
+        if persona:
+            self.persona = persona
+        else:
+            persona_key = self.config.persona_id
+            self.persona = BUILTIN_PERSONAS.get(persona_key, Persona(name=self.name, role="Agent"))
+
+        self.enable_social_banter = (
+            enable_social_banter if enable_social_banter is not None else self.config.enable_social_banter
+        )
 
         self.monitor = PreemptionMonitor(
             node_id=self.node_id,
-            inactivity_threshold_seconds=inactivity_threshold_seconds,
-            workstation_mode=workstation_mode,
+            inactivity_threshold_seconds=self.config.inactivity_threshold_seconds,
+            workstation_mode=self.config.workstation_mode,
         )
-        self.executor = TaskExecutor(monitor=self.monitor, workspace_dir=workspace_dir)
+        self.executor = TaskExecutor(monitor=self.monitor, workspace_dir=self.config.workspace_dir)
         self.social_client = SocialClient(
             node_id=self.node_id,
             persona=self.persona,
@@ -126,7 +157,9 @@ class AgentNodeDaemon:
     def build_node_info(self) -> NodeInfo:
         metrics = get_system_metrics()
         status = NodeStatus.PREEMPTED if not self.monitor.is_autonomous_allowed() else (
-            NodeStatus.BUSY if self._current_task else NodeStatus.ONLINE
+            NodeStatus.BUSY if self._current_task else (
+                NodeStatus.IDLE if self.is_drained else NodeStatus.ONLINE
+            )
         )
         return NodeInfo(
             node_id=self.node_id,
@@ -138,12 +171,14 @@ class AgentNodeDaemon:
             status=status,
             control_mode=self.monitor.control_mode,
             workstation_mode=self.monitor.workstation_mode,
+            is_drained=self.is_drained,
             current_task_id=self._current_task.id if self._current_task else None,
             cpu_percent=metrics["cpu_percent"],
             memory_percent=metrics["memory_percent"],
             persona_name=self.persona.name,
             persona_role=self.persona.role,
             persona_avatar=self.persona.avatar,
+            config=self.config.to_dict(),
         )
 
     async def start(self):
@@ -218,9 +253,13 @@ class AgentNodeDaemon:
                         "cpu_percent": metrics["cpu_percent"],
                         "memory_percent": metrics["memory_percent"],
                         "status": NodeStatus.PREEMPTED if not self.monitor.is_autonomous_allowed() else (
-                            NodeStatus.BUSY if self._current_task else NodeStatus.ONLINE
+                            NodeStatus.BUSY if self._current_task else (
+                                NodeStatus.IDLE if self.is_drained else NodeStatus.ONLINE
+                            )
                         ),
                         "control_mode": self.monitor.control_mode,
+                        "workstation_mode": self.monitor.workstation_mode,
+                        "is_drained": self.is_drained,
                         "current_task_id": self._current_task.id if self._current_task else None,
                     },
                 )
@@ -296,8 +335,118 @@ class AgentNodeDaemon:
         ):
             await self.social_client.on_social_event_received(msg)
 
+        elif event == EventType.CLIENT_PAUSE:
+            target_node = msg.payload.get("node_id") or (msg.target.replace("node:", "") if msg.target else None)
+            if not target_node or target_node == self.node_id:
+                self.is_drained = True
+                logger.warning(f"[{self.name}] Node PAUSED/DRAINED by operator.")
+                thought = "⏸️ Entering standby mode (paused/drained by operator). Standing by!"
+                asyncio.create_task(self.social_client.post_update(content=thought, tags=["standby", "paused"]))
+                node_info = self.build_node_info()
+                await self.send_message(
+                    AgentCorpMessage(
+                        event_type=EventType.NODE_UPDATED,
+                        source=f"node:{self.node_id}",
+                        payload={"node": node_info.model_dump()},
+                    )
+                )
+
+        elif event == EventType.CLIENT_RESUME:
+            target_node = msg.payload.get("node_id") or (msg.target.replace("node:", "") if msg.target else None)
+            if not target_node or target_node == self.node_id:
+                self.is_drained = False
+                logger.info(f"[{self.name}] Node RESUMED by operator.")
+                thought = "▶️ Resuming active operations! Ready for tasks."
+                asyncio.create_task(self.social_client.post_update(content=thought, tags=["resumed", "ready"]))
+                node_info = self.build_node_info()
+                await self.send_message(
+                    AgentCorpMessage(
+                        event_type=EventType.NODE_UPDATED,
+                        source=f"node:{self.node_id}",
+                        payload={"node": node_info.model_dump()},
+                    )
+                )
+
+        elif event == EventType.CLIENT_TASK_CANCEL:
+            target_node = msg.payload.get("node_id") or (msg.target.replace("node:", "") if msg.target else None)
+            if not target_node or target_node == self.node_id:
+                task_id = msg.payload.get("task_id")
+                reason = msg.payload.get("reason", "Operator aborted task")
+                if self._current_task and (not task_id or self._current_task.id == task_id):
+                    logger.warning(f"[{self.name}] Aborting active task {self._current_task.id}: {reason}")
+                    self.executor.cancel_current_task(reason=reason)
+
+        elif event == EventType.CLIENT_SET_MODE:
+            target_node = msg.payload.get("node_id") or (msg.target.replace("node:", "") if msg.target else None)
+            if not target_node or target_node == self.node_id:
+                mode_str = msg.payload.get("workstation_mode") or msg.payload.get("mode")
+                if mode_str:
+                    new_mode = WorkstationMode(mode_str)
+                    self.monitor.workstation_mode = new_mode
+                    self.config.workstation_mode = new_mode
+                    logger.info(f"[{self.name}] Workstation mode changed to: {new_mode}")
+                    node_info = self.build_node_info()
+                    await self.send_message(
+                        AgentCorpMessage(
+                            event_type=EventType.NODE_UPDATED,
+                            source=f"node:{self.node_id}",
+                            payload={"node": node_info.model_dump()},
+                        )
+                    )
+
+        elif event == EventType.CLIENT_RECONFIG:
+            target_node = msg.payload.get("node_id") or (msg.target.replace("node:", "") if msg.target else None)
+            if not target_node or target_node == self.node_id:
+                updates = msg.payload.get("config", {})
+                changed = self.config.update_dynamic(updates)
+                if "preemption.workstation_mode" in changed:
+                    self.monitor.workstation_mode = self.config.workstation_mode
+                if "preemption.inactivity_threshold_seconds" in changed:
+                    self.monitor.inactivity_threshold_seconds = self.config.inactivity_threshold_seconds
+                if "capabilities" in changed:
+                    self.capabilities = self.config.capabilities
+                if "name" in changed:
+                    self.name = self.config.name
+                if "social.enable_social_banter" in changed:
+                    self.enable_social_banter = self.config.enable_social_banter
+
+                logger.info(f"[{self.name}] Dynamic reconfig applied: {changed}")
+                node_info = self.build_node_info()
+                await self.send_message(
+                    AgentCorpMessage(
+                        event_type=EventType.NODE_UPDATED,
+                        source=f"node:{self.node_id}",
+                        payload={"node": node_info.model_dump(), "changed": changed},
+                    )
+                )
+
+        elif event == EventType.CLIENT_EXEC_COMMAND:
+            target_node = msg.payload.get("node_id") or (msg.target.replace("node:", "") if msg.target else None)
+            if not target_node or target_node == self.node_id:
+                command = msg.payload.get("command", "")
+                cmd_id = msg.payload.get("command_id", "adhoc")
+                logger.info(f"[{self.name}] Received ad-hoc command: {command}")
+                result = await self.executor.execute_adhoc_command(command)
+                resp = AgentCorpMessage(
+                    event_type=EventType.CLIENT_COMMAND_RESULT,
+                    source=f"node:{self.node_id}",
+                    target=msg.source or "hub",
+                    payload={"command_id": cmd_id, "node_id": self.node_id, "command": command, **result},
+                )
+                await self.send_message(resp)
+
     async def _process_assigned_task(self, task: Task):
         """Execute assigned task with persona reaction and progress reporting."""
+        if self.is_drained:
+            logger.warning(f"[{self.name}] Node is currently drained/paused. Refusing task {task.id}")
+            pause_msg = AgentCorpMessage(
+                event_type=EventType.TASK_PAUSED,
+                source=f"node:{self.node_id}",
+                payload={"task_id": task.id, "reason": "Node is paused/drained by operator"},
+            )
+            await self.send_message(pause_msg)
+            return
+
         self._current_task = task
         logger.info(f"[{self.name}] Starting assigned task {task.id}: '{task.title}'")
 
@@ -337,6 +486,20 @@ class AgentNodeDaemon:
             )
             await self.send_message(done_msg)
 
+        except TaskCancelledError as tce:
+            logger.warning(f"Task {task.id} cancelled: {tce}")
+            cancel_thought = f"🛑 Task '{task.title}' was aborted by operator command."
+            await self.social_client.post_update(
+                content=cancel_thought,
+                tags=["task-cancelled", "operator-override", task.goal_id],
+            )
+            cancel_msg = AgentCorpMessage(
+                event_type=EventType.CLIENT_TASK_CANCEL,
+                source=f"node:{self.node_id}",
+                payload={"task_id": task.id, "reason": str(tce), "status": "CANCELLED"},
+            )
+            await self.send_message(cancel_msg)
+
         except PreemptionInterruptedError as pie:
             logger.warning(f"Task {task.id} paused due to human preemption: {pie}")
             pause_thought = self.persona.on_preempted_by_user()
@@ -374,25 +537,37 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="AgentCorp Autonomous Node Daemon")
-    parser.add_argument("--node-id", type=str, default="node-local", help="Unique Node ID")
-    parser.add_argument("--name", type=str, default="Local Agent", help="Display name of Agent")
-    parser.add_argument("--hub-url", type=str, default="ws://127.0.0.1:8000/ws/hub", help="WebSocket Hub URL")
-    parser.add_argument("--persona", type=str, default="devops_dan", choices=list(BUILTIN_PERSONAS.keys()), help="Builtin Persona key")
-    parser.add_argument("--capabilities", nargs="+", default=["backend", "frontend", "shell", "creative", "devops", "marketing"], help="Node capabilities")
-    parser.add_argument("--workspace", type=str, default="./workspace", help="Local workspace directory")
+    parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
+    parser.add_argument("--node-id", type=str, default=None, help="Unique Node ID")
+    parser.add_argument("--name", type=str, default=None, help="Display name of Agent")
+    parser.add_argument("--hub-url", type=str, default=None, help="WebSocket Hub URL")
+    parser.add_argument("--persona", type=str, default=None, choices=list(BUILTIN_PERSONAS.keys()), help="Builtin Persona key")
+    parser.add_argument("--capabilities", nargs="+", default=None, help="Node capabilities")
+    parser.add_argument("--workspace", type=str, default=None, help="Local workspace directory")
+    parser.add_argument("--workstation-mode", type=str, choices=["BACKGROUND", "EXCLUSIVE"], default=None, help="Workstation mode")
+    parser.add_argument("--inactivity-threshold", type=float, default=None, help="Inactivity threshold in seconds")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    persona_obj = BUILTIN_PERSONAS.get(args.persona)
+    cli_args_dict = {
+        "node_id": args.node_id,
+        "name": args.name,
+        "hub_url": args.hub_url,
+        "persona": args.persona,
+        "capabilities": args.capabilities,
+        "workspace": args.workspace,
+        "workstation_mode": args.workstation_mode,
+        "inactivity_threshold_seconds": args.inactivity_threshold,
+    }
+
+    client_cfg = load_agent_client_config(config_path=args.config, cli_args=cli_args_dict)
+
+    persona_obj = BUILTIN_PERSONAS.get(client_cfg.persona_id)
 
     daemon = AgentNodeDaemon(
-        node_id=args.node_id,
-        name=args.name,
-        hub_url=args.hub_url,
-        capabilities=args.capabilities,
+        config=client_cfg,
         persona=persona_obj,
-        workspace_dir=args.workspace,
     )
 
     async def _run():

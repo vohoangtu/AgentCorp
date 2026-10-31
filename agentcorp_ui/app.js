@@ -254,12 +254,18 @@ function renderNodes(nodes) {
   container.innerHTML = nodes.map(node => {
     const isPreempted = node.control_mode === 'YIELDED_PASSIVE' || node.status === 'PREEMPTED';
     const isOffline = node.status === 'OFFLINE';
+    const isDrained = !!node.is_drained;
 
-    const cardClass = isOffline ? 'node-card offline' : (isPreempted ? 'node-card preempted' : 'node-card');
+    let cardClass = 'node-card';
+    if (isOffline) cardClass += ' offline';
+    if (isPreempted) cardClass += ' preempted';
+    if (isDrained) cardClass += ' drained';
+
     const badgeClass = isPreempted ? 'control-mode-badge badge-preempted' : 'control-mode-badge badge-full-control';
     const modeText = isPreempted ? '🟡 PREEMPTED (HUMAN)' : '🟢 FULL CONTROL';
 
     const capsHtml = (node.capabilities || []).map(c => `<span class="cap-pill">${escapeHtml(c)}</span>`).join('');
+    const wsModeText = node.workstation_mode === 'EXCLUSIVE' ? '🛑 EXCL' : '💼 BG';
 
     return `
       <div class="node-card ${cardClass}">
@@ -269,7 +275,11 @@ function renderNodes(nodes) {
             <h4>${escapeHtml(node.persona_name || node.name)}</h4>
             <small>${escapeHtml(node.node_id)} • ${escapeHtml(node.hostname)}</small>
           </div>
-          <span class="${badgeClass}">${modeText}</span>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <span class="badge-mode" title="Workstation Mode">${wsModeText}</span>
+            ${isDrained ? '<span class="badge-drained" title="Node is paused/drained">⏸️ PAUSED</span>' : ''}
+            <span class="${badgeClass}">${modeText}</span>
+          </div>
         </div>
         <div class="node-details">
           <div><strong>Role:</strong> ${escapeHtml(node.persona_role || 'Worker')}</div>
@@ -278,16 +288,33 @@ function renderNodes(nodes) {
           <div><strong>Current Task:</strong> ${node.current_task_id ? `<span class="tag-pill">${escapeHtml(node.current_task_id)}</span>` : '<span style="color:var(--text-dim)">Idle</span>'}</div>
         </div>
         <div class="node-caps">${capsHtml}</div>
-        <div class="node-actions">
+        <div class="node-actions" style="display:flex;gap:6px;flex-wrap:wrap;">
           ${isPreempted ? `
-            <button class="btn btn-primary" style="flex:1;font-size:0.8rem;padding:6px;" onclick="setNodeControl('${node.node_id}', 'FULL_CONTROL')">
+            <button class="btn btn-primary" style="flex:1;font-size:0.75rem;padding:6px;" onclick="setNodeControl('${node.node_id}', 'FULL_CONTROL')">
               Reclaim Control
             </button>
           ` : `
-            <button class="btn btn-warning" style="flex:1;font-size:0.8rem;padding:6px;" onclick="setNodeControl('${node.node_id}', 'YIELDED_PASSIVE')">
-              Force Yield to Human
+            <button class="btn btn-warning" style="flex:1;font-size:0.75rem;padding:6px;" onclick="setNodeControl('${node.node_id}', 'YIELDED_PASSIVE')">
+              Force Yield
             </button>
           `}
+          ${isDrained ? `
+            <button class="btn btn-primary" style="flex:1;font-size:0.75rem;padding:6px;" onclick="resumeNodeDirect('${node.node_id}')">
+              ▶️ Resume
+            </button>
+          ` : `
+            <button class="btn btn-secondary" style="flex:1;font-size:0.75rem;padding:6px;" onclick="pauseNodeDirect('${node.node_id}')">
+              ⏸️ Pause
+            </button>
+          `}
+          ${node.current_task_id ? `
+            <button class="btn btn-danger" style="flex:1;font-size:0.75rem;padding:6px;" onclick="cancelNodeTaskDirect('${node.node_id}')">
+              🛑 Abort Task
+            </button>
+          ` : ''}
+          <button class="btn btn-secondary" style="flex:1;font-size:0.75rem;padding:6px;" onclick="openNodeModal('${node.node_id}')">
+            ⚙️ Manage & Exec
+          </button>
         </div>
       </div>
     `;
@@ -536,6 +563,223 @@ function setupEventListeners() {
       console.error('Error launching goal from modal:', e);
     }
   });
+
+  // Theme Toggle Listener
+  const savedTheme = localStorage.getItem('agentcorp-theme') || 'dark';
+  applyTheme(savedTheme);
+
+  const themeBtn = document.getElementById('btn-theme-toggle');
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      const next = current === 'light' ? 'dark' : 'light';
+      applyTheme(next);
+    });
+  }
+
+  // Node Modal Close handlers
+  const nodeModal = document.getElementById('node-modal');
+  const closeBtn1 = document.getElementById('btn-close-node-modal');
+  const closeBtn2 = document.getElementById('btn-close-node-modal-footer');
+  if (closeBtn1) closeBtn1.addEventListener('click', closeNodeModal);
+  if (closeBtn2) closeBtn2.addEventListener('click', closeNodeModal);
+}
+
+// Theme handling
+function applyTheme(theme) {
+  if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('agentcorp-theme', 'light');
+    const btn = document.getElementById('btn-theme-toggle');
+    if (btn) btn.textContent = '🌙 Dark';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('agentcorp-theme', 'dark');
+    const btn = document.getElementById('btn-theme-toggle');
+    if (btn) btn.textContent = '☀️ Light';
+  }
+}
+
+// Direct Node Actions from Card
+async function pauseNodeDirect(nodeId) {
+  try {
+    await fetch(`/api/nodes/${nodeId}/pause`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Paused via UI dashboard' })
+    });
+    fetchNodes();
+  } catch (e) {
+    console.error('Error pausing node:', e);
+  }
+}
+
+async function resumeNodeDirect(nodeId) {
+  try {
+    await fetch(`/api/nodes/${nodeId}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Resumed via UI dashboard' })
+    });
+    fetchNodes();
+  } catch (e) {
+    console.error('Error resuming node:', e);
+  }
+}
+
+async function cancelNodeTaskDirect(nodeId) {
+  if (!confirm(`Are you sure you want to abort the running task on node ${nodeId}?`)) return;
+  try {
+    await fetch(`/api/nodes/${nodeId}/cancel_task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Aborted via UI dashboard' })
+    });
+    fetchNodes();
+    fetchGoalsAndTasks();
+  } catch (e) {
+    console.error('Error cancelling task:', e);
+  }
+}
+
+// Node Modal Control
+let activeModalNodeId = null;
+
+async function openNodeModal(nodeId) {
+  activeModalNodeId = nodeId;
+  const modal = document.getElementById('node-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  const node = cachedNodes.find(n => n.node_id === nodeId);
+  const infoEl = document.getElementById('node-modal-info');
+  const titleEl = document.getElementById('node-modal-title');
+
+  if (node) {
+    titleEl.textContent = `⚙️ Control Agent: ${node.persona_avatar || '🤖'} ${node.persona_name || node.name} (${node.node_id})`;
+    infoEl.innerHTML = `
+      <strong>Host:</strong> ${escapeHtml(node.hostname)} (${node.ip}) | 
+      <strong>Role:</strong> ${escapeHtml(node.persona_role || 'Worker')} | 
+      <strong>Mode:</strong> <span class="badge-mode">${node.workstation_mode}</span> | 
+      <strong>State:</strong> ${node.is_drained ? '<span class="badge-drained">PAUSED</span>' : 'ACTIVE'}
+    `;
+
+    // Populate config fields
+    const inactivityInput = document.getElementById('node-cfg-inactivity');
+    if (inactivityInput && node.config && node.config.preemption) {
+      inactivityInput.value = node.config.preemption.inactivity_threshold_seconds || 15;
+    }
+  }
+
+  // Reset tab to Operations
+  switchNodeModalTab('m-ops');
+}
+
+function closeNodeModal() {
+  const modal = document.getElementById('node-modal');
+  if (modal) modal.style.display = 'none';
+  activeModalNodeId = null;
+}
+
+function switchNodeModalTab(tabId) {
+  document.querySelectorAll('.modal-tab-content').forEach(el => {
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+
+  const targetTab = document.getElementById(tabId);
+  if (targetTab) targetTab.style.display = 'block';
+
+  if (tabId === 'm-ops') document.getElementById('tab-btn-ops')?.classList.add('active');
+  if (tabId === 'm-exec') document.getElementById('tab-btn-exec')?.classList.add('active');
+  if (tabId === 'm-cfg') document.getElementById('tab-btn-cfg')?.classList.add('active');
+}
+
+async function pauseCurrentNode() {
+  if (!activeModalNodeId) return;
+  await pauseNodeDirect(activeModalNodeId);
+  openNodeModal(activeModalNodeId);
+}
+
+async function resumeCurrentNode() {
+  if (!activeModalNodeId) return;
+  await resumeNodeDirect(activeModalNodeId);
+  openNodeModal(activeModalNodeId);
+}
+
+async function cancelCurrentNodeTask() {
+  if (!activeModalNodeId) return;
+  await cancelNodeTaskDirect(activeModalNodeId);
+  openNodeModal(activeModalNodeId);
+}
+
+async function setNodeWorkstationMode(mode) {
+  if (!activeModalNodeId) return;
+  try {
+    await fetch(`/api/nodes/${activeModalNodeId}/workstation_mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workstation_mode: mode })
+    });
+    fetchNodes();
+    openNodeModal(activeModalNodeId);
+  } catch (e) {
+    console.error('Error setting mode:', e);
+  }
+}
+
+async function runNodeCommand() {
+  if (!activeModalNodeId) return;
+  const cmdInput = document.getElementById('node-exec-cmd');
+  const outBox = document.getElementById('node-exec-output');
+  const cmd = cmdInput.value.trim();
+  if (!cmd) return;
+
+  outBox.textContent = `⚡ Executing: ${cmd} ...`;
+  try {
+    const res = await fetch(`/api/nodes/${activeModalNodeId}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd, timeout: 20.0 })
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      const r = data.result || {};
+      let text = `[Exit Code: ${r.exit_code}] Duration: ${(r.duration || 0).toFixed(2)}s\n\n`;
+      if (r.stdout) text += r.stdout + '\n';
+      if (r.stderr) text += `[STDERR]:\n${r.stderr}\n`;
+      outBox.textContent = text.trim();
+    } else {
+      outBox.textContent = `❌ Execution failed or timed out: ${JSON.stringify(data, null, 2)}`;
+    }
+  } catch (e) {
+    outBox.textContent = `❌ Error: ${e}`;
+  }
+}
+
+async function saveNodeConfig() {
+  if (!activeModalNodeId) return;
+  const inactivityVal = parseFloat(document.getElementById('node-cfg-inactivity').value);
+  const banterVal = document.getElementById('node-cfg-banter').value === 'true';
+
+  try {
+    await fetch(`/api/nodes/${activeModalNodeId}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config: {
+          inactivity_threshold_seconds: inactivityVal,
+          enable_social_banter: banterVal
+        }
+      })
+    });
+    alert('Dynamic configuration sent to agent node!');
+    fetchNodes();
+  } catch (e) {
+    console.error('Error saving config:', e);
+  }
 }
 
 // Helpers

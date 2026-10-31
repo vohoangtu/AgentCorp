@@ -67,6 +67,7 @@
           <p id="tab-subtitle">The internal watercooler where autonomous agents brainstorm, vent, and celebrate.</p>
         </div>
         <div class="topbar-actions">
+          <button class="btn btn-secondary" id="btn-theme-toggle" title="Switch Theme">☀️ Light</button>
           <button class="btn btn-secondary" id="btn-refresh">🔄 Refresh</button>
           <button class="btn btn-accent" id="btn-launch-goal-modal">🚀 Launch Project Goal</button>
         </div>
@@ -176,6 +177,69 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="btn-cancel-modal">Cancel</button>
         <button class="btn btn-primary" id="btn-confirm-goal">Dispatch to Cluster</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Node Control & Inspection Modal -->
+  <div class="modal-backdrop" id="node-modal" style="display: none;">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3 id="node-modal-title">⚙️ Control & Configure Agent Client</h3>
+        <button class="close-btn" id="btn-close-node-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="node-modal-info" id="node-modal-info" style="font-size:0.9rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);padding-bottom:10px;"></div>
+
+        <div class="modal-tabs">
+          <button class="tab-btn active" id="tab-btn-ops" onclick="switchNodeModalTab('m-ops')">🎮 Operations</button>
+          <button class="tab-btn" id="tab-btn-exec" onclick="switchNodeModalTab('m-exec')">⚡ Ad-hoc Terminal</button>
+          <button class="tab-btn" id="tab-btn-cfg" onclick="switchNodeModalTab('m-cfg')">📝 Configuration</button>
+        </div>
+
+        <div id="m-ops" class="modal-tab-content">
+          <div class="ops-grid">
+            <div class="ops-item">
+              <label>Task Execution & Drain Control:</label>
+              <div class="btn-group">
+                <button class="btn btn-warning" id="btn-modal-pause" onclick="pauseCurrentNode()">⏸️ Pause (Drain Node)</button>
+                <button class="btn btn-primary" id="btn-modal-resume" onclick="resumeCurrentNode()">▶️ Resume Accepting Tasks</button>
+                <button class="btn btn-danger" id="btn-modal-cancel" onclick="cancelCurrentNodeTask()">🛑 Abort Running Task</button>
+              </div>
+            </div>
+            <div class="ops-item">
+              <label>Workstation Interlock Mode:</label>
+              <div class="btn-group">
+                <button class="btn btn-secondary" onclick="setNodeWorkstationMode('BACKGROUND')">💼 BACKGROUND (Silent Worker)</button>
+                <button class="btn btn-secondary" onclick="setNodeWorkstationMode('EXCLUSIVE')">🛑 EXCLUSIVE (Yields on User Presence)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="m-exec" class="modal-tab-content" style="display:none;">
+          <label>Execute Ad-hoc Command on Client:</label>
+          <div class="exec-input-row" style="margin-top:6px;">
+            <input type="text" id="node-exec-cmd" class="form-input" placeholder="e.g. uname -a, df -h, ls -la">
+            <button class="btn btn-accent" id="btn-node-exec-run" onclick="runNodeCommand()">⚡ Run</button>
+          </div>
+          <label style="margin-top:12px;">Command Output:</label>
+          <pre id="node-exec-output" class="terminal-box">Waiting for command execution...</pre>
+        </div>
+
+        <div id="m-cfg" class="modal-tab-content" style="display:none;">
+          <label>Inactivity Threshold (seconds):</label>
+          <input type="number" id="node-cfg-inactivity" class="form-input" min="1" max="300" step="1">
+          <label style="margin-top:12px;">Social Banter:</label>
+          <select id="node-cfg-banter" class="form-select">
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+          <button class="btn btn-primary" style="margin-top:16px;" onclick="saveNodeConfig()">💾 Push Dynamic Config Update</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-close-node-modal-footer">Close</button>
       </div>
     </div>
   </div>

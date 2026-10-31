@@ -374,6 +374,8 @@ class HubStore:
         status: Optional[NodeStatus] = None,
         control_mode: Optional[ControlMode] = None,
         current_task_id: Optional[str] = None,
+        is_drained: Optional[bool] = None,
+        workstation_mode: Optional[WorkstationMode] = None,
     ) -> Optional[NodeInfo]:
         async with self._lock:
             node = self.nodes.get(node_id)
@@ -388,6 +390,19 @@ class HubStore:
                 node.control_mode = control_mode
             if current_task_id is not None:
                 node.current_task_id = current_task_id
+            if is_drained is not None:
+                node.is_drained = is_drained
+            if workstation_mode is not None:
+                node.workstation_mode = workstation_mode
+            self._persist_node(node)
+            return node
+
+    async def update_node_info(self, node: NodeInfo) -> NodeInfo:
+        async with self._lock:
+            existing = self.nodes.get(node.node_id)
+            if existing:
+                node.last_heartbeat = time.time()
+            self.nodes[node.node_id] = node
             self._persist_node(node)
             return node
 

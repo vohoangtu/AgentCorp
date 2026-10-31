@@ -30,6 +30,7 @@ from shared.models import (
     SocialPost,
     Task,
     TaskStatus,
+    WorkstationMode,
 )
 from agentcorp_hub.orchestrator import Orchestrator
 from agentcorp_hub.social_manager import SocialManager
@@ -108,6 +109,7 @@ orchestrator = Orchestrator(store)
 social_mgr = SocialManager(store)
 connections = ConnectionManager()
 background_tasks = []
+pending_command_results: Dict[str, asyncio.Future] = {}
 
 
 async def orchestrator_loop():
@@ -215,6 +217,32 @@ class PreemptionSimulateRequest(BaseModel):
     details: str = "Manual simulation trigger"
 
 
+class NodePauseRequest(BaseModel):
+    reason: Optional[str] = "Paused by operator"
+
+
+class NodeResumeRequest(BaseModel):
+    reason: Optional[str] = "Resumed by operator"
+
+
+class TaskCancelRequest(BaseModel):
+    task_id: Optional[str] = None
+    reason: Optional[str] = "Cancelled by operator"
+
+
+class WorkstationModeRequest(BaseModel):
+    workstation_mode: WorkstationMode
+
+
+class NodeExecuteCommandRequest(BaseModel):
+    command: str
+    timeout: float = 15.0
+
+
+class NodeReconfigRequest(BaseModel):
+    config: Dict[str, Any]
+
+
 # --- REST Endpoints ---
 @app.get("/api/stats")
 async def get_stats():
@@ -274,6 +302,175 @@ async def set_node_control_mode(node_id: str, req: ControlModeRequest):
     )
     await connections.broadcast(msg)
     return {"status": "ok", "node_id": node_id, "control_mode": new_mode}
+
+
+@app.post("/api/nodes/{node_id}/pause")
+async def pause_node(node_id: str, req: Optional[NodePauseRequest] = None):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    reason = req.reason if req else "Paused by operator"
+    node.is_drained = True
+    if node.status == NodeStatus.ONLINE:
+        node.status = NodeStatus.IDLE
+    await store.update_node_info(node)
+
+    msg = AgentCorpMessage(
+        event_type=EventType.CLIENT_PAUSE,
+        source="hub",
+        target=f"node:{node_id}",
+        payload={"node_id": node_id, "reason": reason},
+    )
+    await connections.send_to_node(node_id, msg)
+    await connections.broadcast(
+        AgentCorpMessage(
+            event_type=EventType.NODE_UPDATED,
+            source="hub",
+            payload={"node": node.model_dump()},
+        )
+    )
+    return {"status": "ok", "node_id": node_id, "is_drained": True, "reason": reason}
+
+
+@app.post("/api/nodes/{node_id}/resume")
+async def resume_node(node_id: str, req: Optional[NodeResumeRequest] = None):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    reason = req.reason if req else "Resumed by operator"
+    node.is_drained = False
+    if node.status == NodeStatus.IDLE:
+        node.status = NodeStatus.ONLINE
+    await store.update_node_info(node)
+
+    msg = AgentCorpMessage(
+        event_type=EventType.CLIENT_RESUME,
+        source="hub",
+        target=f"node:{node_id}",
+        payload={"node_id": node_id, "reason": reason},
+    )
+    await connections.send_to_node(node_id, msg)
+    await connections.broadcast(
+        AgentCorpMessage(
+            event_type=EventType.NODE_UPDATED,
+            source="hub",
+            payload={"node": node.model_dump()},
+        )
+    )
+    return {"status": "ok", "node_id": node_id, "is_drained": False, "reason": reason}
+
+
+@app.post("/api/nodes/{node_id}/cancel_task")
+async def cancel_node_task(node_id: str, req: Optional[TaskCancelRequest] = None):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    task_id = (req.task_id if req and req.task_id else None) or node.current_task_id
+    reason = req.reason if req else "Cancelled by operator"
+
+    # Send abort signal to node daemon
+    msg = AgentCorpMessage(
+        event_type=EventType.CLIENT_TASK_CANCEL,
+        source="hub",
+        target=f"node:{node_id}",
+        payload={"node_id": node_id, "task_id": task_id, "reason": reason},
+    )
+    await connections.send_to_node(node_id, msg)
+
+    if task_id:
+        await orchestrator.handle_task_cancelled(task_id, reason)
+
+    return {"status": "ok", "node_id": node_id, "cancelled_task_id": task_id}
+
+
+@app.post("/api/nodes/{node_id}/workstation_mode")
+async def set_workstation_mode(node_id: str, req: WorkstationModeRequest):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    node.workstation_mode = req.workstation_mode
+    await store.update_node_info(node)
+
+    msg = AgentCorpMessage(
+        event_type=EventType.CLIENT_SET_MODE,
+        source="hub",
+        target=f"node:{node_id}",
+        payload={"node_id": node_id, "workstation_mode": req.workstation_mode.value},
+    )
+    await connections.send_to_node(node_id, msg)
+    await connections.broadcast(
+        AgentCorpMessage(
+            event_type=EventType.NODE_UPDATED,
+            source="hub",
+            payload={"node": node.model_dump()},
+        )
+    )
+    return {"status": "ok", "node_id": node_id, "workstation_mode": req.workstation_mode}
+
+
+@app.post("/api/nodes/{node_id}/execute")
+async def execute_command_on_node(node_id: str, req: NodeExecuteCommandRequest):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if node_id not in connections.node_connections:
+        raise HTTPException(status_code=400, detail="Node is not currently connected via WebSocket")
+
+    import uuid
+    cmd_id = f"cmd-{uuid.uuid4().hex[:8]}"
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    pending_command_results[cmd_id] = fut
+
+    msg = AgentCorpMessage(
+        event_type=EventType.CLIENT_EXEC_COMMAND,
+        source="hub",
+        target=f"node:{node_id}",
+        payload={"command_id": cmd_id, "node_id": node_id, "command": req.command},
+    )
+    await connections.send_to_node(node_id, msg)
+
+    try:
+        timeout = min(max(req.timeout, 1.0), 60.0)
+        result = await asyncio.wait_for(fut, timeout=timeout)
+        return {"status": "success", "result": result}
+    except asyncio.TimeoutError:
+        pending_command_results.pop(cmd_id, None)
+        return {"status": "timeout", "detail": "Command timed out waiting for node response"}
+
+
+@app.get("/api/nodes/{node_id}/config")
+async def get_node_config(node_id: str):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return node.config or {
+        "node_id": node.node_id,
+        "name": node.name,
+        "capabilities": node.capabilities,
+        "workstation_mode": node.workstation_mode,
+        "is_drained": node.is_drained,
+    }
+
+
+@app.post("/api/nodes/{node_id}/config")
+async def update_node_config(node_id: str, req: NodeReconfigRequest):
+    node = await store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    msg = AgentCorpMessage(
+        event_type=EventType.CLIENT_RECONFIG,
+        source="hub",
+        target=f"node:{node_id}",
+        payload={"node_id": node_id, "config": req.config},
+    )
+    await connections.send_to_node(node_id, msg)
+    return {"status": "ok", "node_id": node_id, "sent_config": req.config}
 
 
 @app.get("/api/templates")
@@ -498,9 +695,16 @@ async def handle_node_message(node_id: str, msg: AgentCorpMessage):
             )
         )
 
+    elif event == EventType.NODE_UPDATED:
+        if "node" in msg.payload:
+            node_info = NodeInfo(**msg.payload["node"])
+            await store.update_node_info(node_info)
+        await connections.broadcast(msg)
+
     elif event == EventType.NODE_HEARTBEAT:
         raw_status = msg.payload.get("status")
         raw_mode = msg.payload.get("control_mode")
+        raw_ws_mode = msg.payload.get("workstation_mode")
         await store.update_node_heartbeat(
             node_id=node_id,
             cpu_pct=msg.payload.get("cpu_percent", 0.0),
@@ -508,7 +712,24 @@ async def handle_node_message(node_id: str, msg: AgentCorpMessage):
             status=NodeStatus(raw_status) if raw_status else None,
             control_mode=ControlMode(raw_mode) if raw_mode else None,
             current_task_id=msg.payload.get("current_task_id"),
+            is_drained=msg.payload.get("is_drained"),
+            workstation_mode=WorkstationMode(raw_ws_mode) if raw_ws_mode else None,
         )
+
+    elif event == EventType.CLIENT_TASK_CANCEL:
+        task_id = msg.payload.get("task_id")
+        reason = msg.payload.get("reason", "Cancelled by operator")
+        if task_id:
+            await orchestrator.handle_task_cancelled(task_id, reason)
+        await connections.broadcast(msg)
+
+    elif event == EventType.CLIENT_COMMAND_RESULT:
+        cmd_id = msg.payload.get("command_id")
+        if cmd_id and cmd_id in pending_command_results:
+            fut = pending_command_results.pop(cmd_id)
+            if not fut.done():
+                fut.set_result(msg.payload)
+        await connections.broadcast(msg)
 
     elif event == EventType.PREEMPTION_SIGNAL:
         signal = PreemptionSignal(**msg.payload["signal"])

@@ -1,26 +1,63 @@
-# AgentCorp Configuration Example
+# ==============================================================================
+# AgentCorp Unified Configuration Template (Mẫu Cấu Hình Chuẩn AgentCorp)
+# ==============================================================================
 
+# Cấu hình Master Hub Server
 hub:
   host: "0.0.0.0"
   port: 8000
   heartbeat_timeout_seconds: 45.0
   cors_allowed_origins: ["*"]
 
+# Cấu hình Agent Client (Node Daemon trên máy trạm / worker server)
 node:
+  # Địa chỉ kết nối WebSocket về Hub
   hub_url: "ws://127.0.0.1:8000/ws/hub"
+
+  # Danh tính Agent Client (để trống sẽ tự động lấy theo hostname)
+  node_id: ""
+  name: ""
+  persona_id: "devops_dan"
+
+  # Thư mục làm việc an toàn của Agent
   workspace_dir: "./workspace"
+
+  # Danh sách năng lực / kỹ năng của Client Node
+  capabilities:
+    - "backend"
+    - "frontend"
+    - "devops"
+    - "marketing"
+    - "qa"
+    - "shell"
+    - "gui"
+    - "browser"
+
+  # Cơ chế nhường quyền người dùng (Human Preemption & Interlocks)
   preemption:
-    # Seconds of inactivity before node reclaims autonomous device control
+    # Chế độ máy trạm:
+    # - BACKGROUND: Chạy ngầm êm ái, người dùng làm việc bình thường không bị dừng task
+    # - EXCLUSIVE: Dành riêng cho Agent; tạm dừng ngay lập tức khi phát hiện người dùng
+    workstation_mode: "BACKGROUND"
+
+    # Số giây không hoạt động trước khi Agent tự động lấy lại quyền điều khiển
     inactivity_threshold_seconds: 15.0
-    # Polling frequency for checking user session / inputs
+
+    # Tần suất kiểm tra hoạt động người dùng (giây)
     poll_interval_seconds: 0.5
-    # Optional path to flag file for human activity simulation
+
+    # File cờ kiểm tra giả lập hoạt động người dùng
     flag_file_path: "/tmp/.agentcorp_user_active"
-  
+
+  # Mạng xã hội nội bộ AgentNet & trò chuyện
   social:
     enable_social_banter: true
     spontaneous_post_interval_seconds: 90.0
 
+  # La bàn đạo đức số (Digital Conscience - Ahimsa Host Protection)
+  enable_ethical_guard: true
+
+# Danh mục tính cách AI mặc định
 personas:
   - id: "devops_dan"
     name: "DevOps Dan"

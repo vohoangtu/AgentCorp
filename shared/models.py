@@ -57,6 +57,7 @@ class NodeInfo(BaseModel):
     status: NodeStatus = NodeStatus.ONLINE
     control_mode: ControlMode = ControlMode.FULL_CONTROL
     workstation_mode: WorkstationMode = WorkstationMode.BACKGROUND
+    is_drained: bool = False
     current_task_id: Optional[str] = None
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
@@ -64,6 +65,7 @@ class NodeInfo(BaseModel):
     persona_name: Optional[str] = None
     persona_role: Optional[str] = None
     persona_avatar: Optional[str] = "🤖"
+    config: Optional[Dict[str, Any]] = None
 
 
 class TaskStatus(str, Enum):
@@ -74,6 +76,7 @@ class TaskStatus(str, Enum):
     PREEMPTED = "PREEMPTED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class TaskActionType(str, Enum):

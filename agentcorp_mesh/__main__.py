@@ -59,9 +59,6 @@ async def main():
         preferred_leaders=args.preferred_leader,
         workstation_mode=args.workstation_mode,
     )
-        port=args.port,
-        preferred_leaders=args.preferred_leader,
-    )
 
     print("""
     ===================================================================

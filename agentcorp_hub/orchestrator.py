@@ -248,12 +248,13 @@ class Orchestrator:
         completed_task_ids = {t.id for t in all_tasks if t.status == TaskStatus.COMPLETED}
 
         # Find eligible nodes:
-        # Must be ONLINE or IDLE, not OFFLINE, not PREEMPTED, control_mode == FULL_CONTROL, and not busy with another task
+        # Must be ONLINE or IDLE, not OFFLINE, not PREEMPTED, not drained/paused, control_mode == FULL_CONTROL, and not busy with another task
         available_nodes = [
             n
             for n in all_nodes
             if n.status in (NodeStatus.ONLINE, NodeStatus.IDLE)
             and n.control_mode == ControlMode.FULL_CONTROL
+            and not getattr(n, "is_drained", False)
             and (n.current_task_id is None or n.current_task_id == "")
         ]
 
@@ -365,5 +366,21 @@ class Orchestrator:
             else:
                 node.status = NodeStatus.ONLINE
                 await self.store.update_node_control_mode(node_id, ControlMode.FULL_CONTROL, NodeStatus.ONLINE)
+
+    async def handle_task_cancelled(self, task_id: str, reason: str = "Operator cancelled task"):
+        """Handle task cancellation."""
+        task = await self.store.get_task(task_id)
+        if task:
+            task.status = TaskStatus.CANCELLED
+            task.error = reason
+            await self.store.update_task(task_id, status=TaskStatus.CANCELLED, error=reason)
+            if task.assigned_node_id:
+                node = await self.store.get_node(task.assigned_node_id)
+                if node and node.current_task_id == task_id:
+                    status = NodeStatus.IDLE if getattr(node, "is_drained", False) else NodeStatus.ONLINE
+                    await self.store.update_node_heartbeat(node.node_id, status=status, current_task_id=None)
+            logger.info(f"Task {task_id} marked CANCELLED in orchestrator: {reason}")
+            return task
+        return None
 
         return None
