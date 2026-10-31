@@ -10,6 +10,7 @@ import logging
 from typing import List, Optional
 import uvicorn
 
+from shared.models import WorkstationMode
 from agentcorp_hub.server import app as hub_app
 from agentcorp_node.daemon import AgentNodeDaemon
 from agentcorp_node.persona import BUILTIN_PERSONAS, Persona
@@ -31,9 +32,11 @@ class MeshAgentNode:
         port: int = 8000,
         poll_interval: float = 6.0,
         preferred_leaders: Optional[List[str]] = None,
+        workstation_mode: WorkstationMode = WorkstationMode.BACKGROUND,
     ):
         self.port = port
         self.poll_interval = poll_interval
+        self.workstation_mode = WorkstationMode(workstation_mode)
 
         # Tailscale Discovery & Election
         self.discovery = TailscaleDiscovery(port=port)
@@ -141,6 +144,7 @@ class MeshAgentNode:
                     capabilities=self.capabilities,
                     persona=self.persona,
                     workspace_dir=f"./workspace/{self.node_id}",
+                    workstation_mode=self.workstation_mode,
                 )
 
                 # Link preemption monitor to election: if human touches this PC, notify election to yield leadership

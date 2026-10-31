@@ -16,6 +16,11 @@ class ControlMode(str, Enum):
     PAUSED = "PAUSED"                    # Explicitly paused by operator or coordinator
 
 
+class WorkstationMode(str, Enum):
+    BACKGROUND = "BACKGROUND"    # Headless companion: tasks run quietly in background while user works normally
+    EXCLUSIVE = "EXCLUSIVE"      # Dedicated machine: yields/suspends all tasks when human user is active
+
+
 class PreemptionSignalType(str, Enum):
     USER_DETECTED = "USER_DETECTED"      # Human input/interaction or login detected
     USER_IDLE = "USER_IDLE"              # Human user went idle, safe to reclaim
@@ -51,6 +56,7 @@ class NodeInfo(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
     status: NodeStatus = NodeStatus.ONLINE
     control_mode: ControlMode = ControlMode.FULL_CONTROL
+    workstation_mode: WorkstationMode = WorkstationMode.BACKGROUND
     current_task_id: Optional[str] = None
     cpu_percent: float = 0.0
     memory_percent: float = 0.0

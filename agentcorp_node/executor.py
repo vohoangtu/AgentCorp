@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 import httpx
 
 from shared.conscience import ConscienceVerdict, DigitalConscience
-from shared.models import Task, TaskActionType
+from shared.models import Task, TaskActionType, WorkstationMode
 from agentcorp_node.preemption import PreemptionMonitor
 from agentcorp_node.tuzygent_adapter import TuzygentAdapter
 
@@ -47,7 +47,16 @@ class TaskExecutor:
         self.monitor.register_on_reclaim(self._on_reclaimed)
 
     def _on_preempted(self, sig):
-        logger.warning(f"Executor received preemption signal. Pausing active operations.")
+        logger.warning(f"Executor received preemption signal.")
+        # In BACKGROUND mode, continue executing background tasks without suspending
+        if getattr(self.monitor, "workstation_mode", None) == WorkstationMode.BACKGROUND:
+            if self.current_task and self.current_task.action.action_type != TaskActionType.GUI:
+                logger.info(
+                    f"Background task {self.current_task.id} ({self.current_task.action.action_type}) "
+                    f"continues running silently in background while user works."
+                )
+                return
+
         self._is_paused = True
         self._resume_event.clear()
 
@@ -93,7 +102,7 @@ class TaskExecutor:
 
         try:
             # Check preemption guard before starting
-            if not self.monitor.is_autonomous_allowed():
+            if not self.monitor.is_autonomous_allowed(action.action_type):
                 if action.action_type == TaskActionType.GUI:
                     raise PreemptionInterruptedError("GUI automation blocked: human user has physical control!")
                 logger.info(f"Device preempted. Waiting for human to finish before starting task {task.id}...")

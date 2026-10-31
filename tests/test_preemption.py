@@ -96,3 +96,27 @@ async def test_watchdog_flag_file_preemption():
     finally:
         if os.path.exists(flag_path):
             os.remove(flag_path)
+
+
+def test_background_mode_allows_headless_tasks():
+    from shared.models import TaskActionType, WorkstationMode
+
+    # Background mode: human is active, but background tasks are allowed
+    monitor = PreemptionMonitor(
+        node_id="dev-node",
+        inactivity_threshold_seconds=1.0,
+        workstation_mode=WorkstationMode.BACKGROUND,
+    )
+    monitor.trigger_user_detected("developer_alice", "Typing code")
+    assert monitor.control_mode == ControlMode.YIELDED_PASSIVE
+
+    # Background tasks (SHELL, TUZYGENT, BROWSER, FILE_WRITE) should be ALLOWED
+    assert monitor.is_autonomous_allowed(TaskActionType.SHELL) is True
+    assert monitor.is_autonomous_allowed(TaskActionType.TUZYGENT) is True
+    assert monitor.is_autonomous_allowed(TaskActionType.BROWSER) is True
+    assert monitor.is_autonomous_allowed(TaskActionType.FILE_WRITE) is True
+    assert monitor.is_autonomous_allowed(None) is True
+
+    # Only physical desktop GUI tasks should be BLOCKED
+    assert monitor.is_autonomous_allowed(TaskActionType.GUI) is False
+

@@ -22,6 +22,7 @@ from shared.models import (
     PreemptionSignal,
     PreemptionSignalType,
     Task,
+    WorkstationMode,
 )
 from shared.utils import get_system_metrics
 from agentcorp_node.executor import PreemptionInterruptedError, TaskExecutor
@@ -45,6 +46,7 @@ class AgentNodeDaemon:
         workspace_dir: str = "./workspace",
         inactivity_threshold_seconds: float = 8.0,
         enable_social_banter: bool = True,
+        workstation_mode: WorkstationMode = WorkstationMode.BACKGROUND,
     ):
         self.node_id = node_id
         self.name = name
@@ -56,6 +58,7 @@ class AgentNodeDaemon:
         self.monitor = PreemptionMonitor(
             node_id=self.node_id,
             inactivity_threshold_seconds=inactivity_threshold_seconds,
+            workstation_mode=workstation_mode,
         )
         self.executor = TaskExecutor(monitor=self.monitor, workspace_dir=workspace_dir)
         self.social_client = SocialClient(
@@ -134,6 +137,7 @@ class AgentNodeDaemon:
             capabilities=self.capabilities,
             status=status,
             control_mode=self.monitor.control_mode,
+            workstation_mode=self.monitor.workstation_mode,
             current_task_id=self._current_task.id if self._current_task else None,
             cpu_percent=metrics["cpu_percent"],
             memory_percent=metrics["memory_percent"],

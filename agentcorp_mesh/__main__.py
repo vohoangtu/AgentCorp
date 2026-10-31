@@ -40,6 +40,13 @@ async def main():
         default=["vultr", "server", "srv", "hub"],
         help="Hostnames preferred as Orchestrator leader",
     )
+    parser.add_argument(
+        "--workstation-mode",
+        type=str,
+        default="BACKGROUND",
+        choices=["BACKGROUND", "EXCLUSIVE"],
+        help="BACKGROUND: run quietly in background while user works; EXCLUSIVE: yield immediately when user is present",
+    )
     args = parser.parse_args()
 
     persona_obj = BUILTIN_PERSONAS.get(args.persona)
@@ -48,6 +55,10 @@ async def main():
         name=args.name,
         node_id=args.node_id,
         persona=persona_obj,
+        port=args.port,
+        preferred_leaders=args.preferred_leader,
+        workstation_mode=args.workstation_mode,
+    )
         port=args.port,
         preferred_leaders=args.preferred_leader,
     )

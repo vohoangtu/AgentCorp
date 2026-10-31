@@ -12,7 +12,7 @@ import time
 from typing import Callable, List, Optional
 import psutil
 
-from shared.models import ControlMode, PreemptionSignal, PreemptionSignalType
+from shared.models import ControlMode, PreemptionSignal, PreemptionSignalType, TaskActionType, WorkstationMode
 
 logger = logging.getLogger("agentcorp.preemption")
 
@@ -27,12 +27,14 @@ class PreemptionMonitor:
         poll_interval: float = 0.5,
         flag_file_path: Optional[str] = "/tmp/.agentcorp_user_active",
         enable_os_user_check: bool = False,
+        workstation_mode: WorkstationMode = WorkstationMode.EXCLUSIVE,
     ):
         self.node_id = node_id
         self.inactivity_threshold_seconds = inactivity_threshold_seconds
         self.poll_interval = poll_interval
         self.flag_file_path = flag_file_path
         self.enable_os_user_check = enable_os_user_check
+        self.workstation_mode = WorkstationMode(workstation_mode)
         self.start_time = time.time()
 
         self.control_mode: ControlMode = ControlMode.FULL_CONTROL
@@ -52,9 +54,18 @@ class PreemptionMonitor:
         """Register callback when agent reclaims control."""
         self._on_reclaim_callbacks.append(callback)
 
-    def is_autonomous_allowed(self) -> bool:
-        """True only if node has full autonomous device control."""
-        return self.control_mode == ControlMode.FULL_CONTROL
+    def is_autonomous_allowed(self, action_type: Optional[TaskActionType] = None) -> bool:
+        """True if autonomous execution is permitted for the action type.
+
+        In BACKGROUND mode, background tasks (SHELL, FILE_WRITE, BROWSER, TUZYGENT, SYNTHETIC)
+        run concurrently while human works. Only physical GUI desktop tasks are paused.
+        In EXCLUSIVE mode, all tasks pause when human user is active.
+        """
+        if self.control_mode == ControlMode.FULL_CONTROL:
+            return True
+        if self.workstation_mode == WorkstationMode.BACKGROUND:
+            return action_type != TaskActionType.GUI
+        return False
 
     def check_human_activity(self) -> Optional[str]:
         """Check for active human interaction across multi-detection strategies.
